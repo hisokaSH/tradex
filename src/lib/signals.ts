@@ -83,7 +83,7 @@ export async function fetchLatestSignals(): Promise<Signal[]> {
 
 export async function checkEngineHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/health`, { next: { revalidate: 30 } });
+    const res = await fetch(`${BASE}/health`, { headers, next: { revalidate: 30 } });
     return res.ok;
   } catch {
     return false;
