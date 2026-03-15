@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --red: #FF3B3B;
+  --red-dim: #cc2e2e;
+  --red-muted: rgba(255, 59, 59, 0.1);
+  --red-border: rgba(255, 59, 59, 0.15);
+  --orange: #FF6B35;
+  --bg: #080B0F;
+  --bg2: #0D1117;
+  --bg3: #111820;
+  --bg4: #161E28;
+  --border: rgba(255, 255, 255, 0.07);
+  --text: #E8EDF3;
+  --text2: #8B96A3;
+  --text3: #4A5568;
+  --green: #00D97E;
+  --green-muted: rgba(0, 217, 126, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'Syne', sans-serif;
+  overflow-x: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+/* Grid background utility */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(255, 59, 59, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 59, 59, 0.04) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* Pulse animation */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+.pulse-dot {
+  animation: pulse-dot 2s infinite;
+}
+
+/* Ticker scroll */
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.ticker-scroll {
+  animation: ticker-scroll 40s linear infinite;
+}
