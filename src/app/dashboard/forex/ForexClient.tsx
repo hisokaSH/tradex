@@ -1,234 +1,254 @@
 "use client";
-
 import { useState, useRef } from "react";
 
-const WEBHOOK_URL = "http://localhost:5002";
-const WEBHOOK_SECRET = process.env.NEXT_PUBLIC_WEBHOOK_SECRET || "";
+const WEBHOOK_URL = process.env.NEXT_PUBLIC_WEBHOOK_URL || "http://localhost:5001";
+const PAIRS = ["EURUSD","GBPUSD","USDJPY","USDCHF","AUDUSD","NZDUSD","USDCAD","EURGBP","EURJPY","GBPJPY","XAUUSD","US30","NAS100","GER40","BTCUSDT","ETHUSDT"];
+const TIMEFRAMES = ["1M","5M","15M","1H","4H","1D","1W"];
 
-const PAIRS = ["EURUSD","GBPUSD","USDJPY","USDCHF","AUDUSD","NZDUSD","USDCAD","EURGBP","EURJPY","GBPJPY","XAUUSD","US30","NAS100","GER40"];
-const TIMEFRAMES = ["1M","5M","15M","1H","4H","1D"];
+interface Analysis {
+  pair: string; timeframe: string; trend: string; phase: string;
+  support_levels: string[]; resistance_levels: string[]; key_level: string;
+  near_key_level: boolean; distance_from_key_level_pct: number;
+  chart_patterns: {name:string;status:string;implication:string;reliability:string;historical_winrate?:number}[];
+  candlestick_patterns: {name:string;signal:string;strength:string}[];
+  trend_lines: string;
+  fibonacci: {visible:boolean;key_level:string};
+  indicators: {rsi:string;rsi_divergence:string;macd:string;ma_position:string;volume:string};
+  confluences: string[];
+  confluence_count: number;
+  confluence_direction: string;
+  news_correlation: string;
+  session_info: {name:string;quality:string};
+  candle_info: {pct_complete:number;near_close:boolean;mins_remaining:number};
+  dual_ai_conflict?: boolean;
+  dual_confidence?: number;
+  trade: {direction:string;wait_reason?:string;entry:string;stop_loss:string;sl_reasoning:string;take_profit_1:string;take_profit_2:string;rr_ratio:string;hold_duration:string;confidence:string;invalidation:string};
+  pattern_history: string; summary: string; warnings: string[];
+}
 
 export default function ForexClient() {
-  const [screenshot, setScreenshot]   = useState<string | null>(null);
-  const [screenshotName, setName]     = useState("");
-  const [pair, setPair]               = useState("EURUSD");
-  const [action, setAction]           = useState<"buy"|"sell">("buy");
-  const [price, setPrice]             = useState("");
-  const [timeframe, setTimeframe]     = useState("1H");
-  const [strategy, setStrategy]       = useState("");
-  const [rsi, setRsi]                 = useState("");
-  const [notes, setNotes]             = useState("");
-  const [loading, setLoading]         = useState(false);
-  const [result, setResult]           = useState<string | null>(null);
-  const [error, setError]             = useState("");
+  const [screenshot, setScreenshot] = useState<string|null>(null);
+  const [screenshotName, setName] = useState("");
+  const [pair, setPair]     = useState("EURUSD");
+  const [timeframe, setTF]  = useState("1H");
+  const [notes, setNotes]   = useState("");
+  const [price, setPrice]   = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [analysis, setAnalysis] = useState<Analysis|null>(null);
+  const [error, setError]   = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const file = e.target.files?.[0]; if (!file) return;
     setName(file.name);
     const reader = new FileReader();
     reader.onload = () => setScreenshot((reader.result as string).split(",")[1]);
     reader.readAsDataURL(file);
   }
 
-  async function analyzeAndSubmit() {
-    if (!price) { setError("Enter the current price"); return; }
-    setLoading(true); setError(""); setResult(null);
-
-    // If screenshot provided, run Claude vision analysis first
-    let chartAnalysis = "";
-    if (screenshot) {
-      try {
-        const r = await fetch("/api/analyze-chart", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            image: screenshot,
-            description: `This is a ${pair} ${timeframe} chart. The trader wants to ${action}. ${notes}`,
-          }),
-        });
-        const d = await r.json();
-        chartAnalysis = d.text || "";
-      } catch {}
-    }
-
-    // Send to webhook for full processing
+  async function analyze() {
+    if (!screenshot) { setError("Upload a chart screenshot first"); return; }
+    setLoading(true); setError(""); setAnalysis(null); setSubmitted(false);
     try {
-      const payload = {
-        pair, action, price, timeframe,
-        strategy: strategy || "Manual Analysis",
-        rsi: rsi || undefined,
-        message: chartAnalysis ? `Chart analysis: ${chartAnalysis.slice(0,300)}` : notes,
-        source: "dashboard",
-      };
-
-      const r = await fetch(`${WEBHOOK_URL}/webhook${WEBHOOK_SECRET ? `?secret=${WEBHOOK_SECRET}` : ""}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const r = await fetch("/api/analyze-chart", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: screenshot, description: notes, pair, timeframe }),
       });
-
-      if (r.ok) {
-        setResult("✅ Signal submitted for analysis! Check Discord in ~30 seconds for the full report with backtest, security checks, and CSX AI verdict.");
-        setScreenshot(null); setName(""); setPrice(""); setNotes("");
-      } else {
-        throw new Error("Webhook server not running");
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed — make sure webhook server is running (py -3.12 webhook.py)");
-    } finally {
-      setLoading(false);
-    }
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Analysis failed");
+      if (d.analysis) setAnalysis(d.analysis);
+      else setError("Could not parse analysis");
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : "Failed"); }
+    finally { setLoading(false); }
   }
 
-  const mono = { fontFamily: "'Space Mono',monospace" };
-  const inputStyle: React.CSSProperties = {
-    background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: "3px",
-    color: "var(--text)", fontFamily: "'Syne',sans-serif", fontSize: "0.85rem",
-    padding: "9px 12px", outline: "none", width: "100%",
-  };
-  const selectStyle: React.CSSProperties = { ...inputStyle, cursor: "pointer" };
-  const labelStyle: React.CSSProperties = { ...mono, fontSize: "0.6rem", color: "var(--text3)", letterSpacing: "1px", display: "block", marginBottom: "5px" };
+  async function submitToDiscord() {
+    if (!analysis || !price) { setError("Enter current price first"); return; }
+    setLoading(true);
+    try {
+      const r = await fetch(`${WEBHOOK_URL}/webhook`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pair, action: analysis.trade.direction?.toLowerCase(), price, timeframe, strategy: "CSX AI Chart Analysis", message: analysis.summary }),
+      });
+      if (r.ok) setSubmitted(true); else throw new Error("Webhook server not running");
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : "Submit failed"); }
+    finally { setLoading(false); }
+  }
+
+  const mono: React.CSSProperties = { fontFamily: "'Space Mono',monospace" };
+  const inp: React.CSSProperties = { background:"var(--bg3)",border:"1px solid var(--border)",borderRadius:"3px",color:"var(--text)",fontFamily:"'Syne',sans-serif",fontSize:"0.85rem",padding:"9px 12px",outline:"none",width:"100%" };
+  const lbl: React.CSSProperties = { ...mono,fontSize:"0.6rem",color:"var(--text3)",letterSpacing:"1px",display:"block",marginBottom:"5px" };
+
+  const dirColor = analysis?.trade.direction === "BUY" ? "var(--green)" : analysis?.trade.direction === "SELL" ? "var(--red)" : "var(--orange)";
+  const confColor = analysis?.trade.confidence === "HIGH" ? "var(--green)" : analysis?.trade.confidence === "MEDIUM" ? "var(--orange)" : "var(--red)";
+  const sessionColor = {"PRIME":"var(--green)","HIGH":"var(--green)","MEDIUM":"var(--orange)","LOW":"var(--red)"}[analysis?.session_info?.quality||""] || "var(--text3)";
 
   return (
     <div>
-      <p style={{ ...mono, fontSize: "0.68rem", color: "var(--text3)", letterSpacing: "1px", marginBottom: "1.5rem" }}>
-        // FOREX SIGNAL ANALYZER
-      </p>
+      <p style={{...mono,fontSize:"0.68rem",color:"var(--text3)",letterSpacing:"1px",marginBottom:"1.5rem"}}>// FOREX CHART ANALYZER v2</p>
+      <div style={{display:"grid",gridTemplateColumns:analysis?"1fr 1.8fr":"1fr 1fr",gap:"1.5rem"}}>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
-
-        {/* Left — chart upload + details */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-
-          {/* Screenshot upload */}
-          <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "4px", padding: "1.25rem" }}>
-            <p style={{ fontSize: "0.85rem", fontWeight: "600", marginBottom: "0.25rem" }}>Chart Screenshot <span style={{ color: "var(--text3)", fontSize: "0.75rem" }}>(optional)</span></p>
-            <p style={{ fontSize: "0.75rem", color: "var(--text2)", marginBottom: "1rem" }}>Upload your TradingView chart — CSX AI will analyze it visually</p>
-            <div onClick={() => fileRef.current?.click()} style={{
-              border: `2px dashed ${screenshot ? "var(--green)" : "var(--border)"}`,
-              borderRadius: "4px", padding: "1.5rem", textAlign: "center", cursor: "pointer",
-              background: screenshot ? "rgba(0,217,126,0.04)" : "var(--bg3)",
-            }}>
-              {screenshot ? (
-                <div>
-                  <p style={{ ...mono, fontSize: "0.68rem", color: "var(--green)", marginBottom: "0.5rem" }}>✓ {screenshotName}</p>
-                  <img src={`data:image/png;base64,${screenshot}`} alt="chart" style={{ maxHeight: "150px", maxWidth: "100%", borderRadius: "3px" }} />
-                </div>
-              ) : (
-                <p style={{ ...mono, fontSize: "0.72rem", color: "var(--text3)" }}>📸 Click to upload chart</p>
-              )}
+        {/* Left */}
+        <div style={{display:"flex",flexDirection:"column",gap:"1rem"}}>
+          <div style={{background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:"4px",padding:"1.25rem"}}>
+            <p style={{fontSize:"0.85rem",fontWeight:"600",marginBottom:"1rem"}}>Upload Chart</p>
+            <div onClick={()=>fileRef.current?.click()} style={{border:`2px dashed ${screenshot?"var(--green)":"var(--border)"}`,borderRadius:"4px",padding:"1.25rem",textAlign:"center",cursor:"pointer",background:screenshot?"rgba(0,217,126,0.04)":"var(--bg3)",marginBottom:"0.75rem"}}>
+              {screenshot ? <div><p style={{...mono,fontSize:"0.68rem",color:"var(--green)",marginBottom:"0.5rem"}}>✓ {screenshotName}</p><img src={`data:image/png;base64,${screenshot}`} alt="chart" style={{maxHeight:"120px",maxWidth:"100%",borderRadius:"3px"}}/></div>
+              : <p style={{...mono,fontSize:"0.72rem",color:"var(--text3)"}}>📸 Click to upload TradingView chart</p>}
             </div>
-            <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} />
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{display:"none"}}/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"10px"}}>
+              <div><label style={lbl}>PAIR</label><select value={pair} onChange={e=>setPair(e.target.value)} style={inp}>{PAIRS.map(p=><option key={p}>{p}</option>)}</select></div>
+              <div><label style={lbl}>TIMEFRAME</label><select value={timeframe} onChange={e=>setTF(e.target.value)} style={inp}>{TIMEFRAMES.map(t=><option key={t}>{t}</option>)}</select></div>
+            </div>
+            <div style={{marginBottom:"10px"}}><label style={lbl}>CURRENT PRICE</label><input value={price} onChange={e=>setPrice(e.target.value)} placeholder="e.g. 1.08450" style={inp}/></div>
+            <div><label style={lbl}>NOTES (optional)</label><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Any context..." rows={2} style={{...inp,resize:"vertical",lineHeight:"1.6"}}/></div>
           </div>
 
-          {/* Trade details */}
-          <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "4px", padding: "1.25rem", display: "flex", flexDirection: "column", gap: "12px" }}>
-            <p style={{ fontSize: "0.85rem", fontWeight: "600" }}>Trade Details</p>
+          {error && <div style={{background:"var(--red-muted)",border:"1px solid var(--red-border)",borderRadius:"3px",padding:"10px 14px"}}><p style={{...mono,fontSize:"0.68rem",color:"var(--red)"}}>⚠ {error}</p></div>}
+          {submitted && <div style={{background:"rgba(0,217,126,0.08)",border:"1px solid rgba(0,217,126,0.3)",borderRadius:"3px",padding:"10px 14px"}}><p style={{...mono,fontSize:"0.68rem",color:"var(--green)"}}>✅ Posted to Discord!</p></div>}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <div>
-                <label style={labelStyle}>PAIR</label>
-                <select value={pair} onChange={e => setPair(e.target.value)} style={selectStyle}>
-                  {PAIRS.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
+          <button onClick={analyze} disabled={loading||!screenshot} style={{padding:"12px",background:loading?"var(--bg4)":"var(--red)",border:"none",color:loading?"var(--text3)":"#fff",...mono,fontSize:"0.78rem",letterSpacing:"1px",fontWeight:"700",borderRadius:"3px",cursor:loading?"not-allowed":"pointer"}}>
+            {loading?"// CSX AI ANALYZING...":"🔍 ANALYZE CHART →"}
+          </button>
+          {analysis && analysis.trade.direction !== "WAIT" && !submitted &&
+            <button onClick={submitToDiscord} disabled={loading} style={{padding:"12px",background:"rgba(0,217,126,0.15)",border:"1px solid rgba(0,217,126,0.4)",color:"var(--green)",...mono,fontSize:"0.78rem",letterSpacing:"1px",fontWeight:"700",borderRadius:"3px",cursor:"pointer"}}>
+              📤 POST TO DISCORD →
+            </button>}
+        </div>
+
+        {/* Right — Results */}
+        {analysis ? (
+          <div style={{display:"flex",flexDirection:"column",gap:"1rem"}}>
+
+            {/* Header */}
+            <div style={{background:"var(--bg2)",border:`1px solid ${analysis.trade.direction==="WAIT"?"var(--orange)":analysis.trade.direction==="BUY"?"rgba(0,217,126,0.3)":"var(--red-border)"}`,borderRadius:"4px",padding:"1.25rem"}}>
+              <div style={{display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap",marginBottom:"0.75rem"}}>
+                <span style={{...mono,fontSize:"1rem",fontWeight:"700",color:dirColor}}>
+                  {analysis.trade.direction==="BUY"?"🟢":analysis.trade.direction==="SELL"?"🔴":"⏳"} {analysis.trade.direction} — {analysis.pair}
+                </span>
+                <span style={{...mono,fontSize:"0.65rem",color:confColor,background:`${confColor}18`,padding:"2px 10px",borderRadius:"2px"}}>{analysis.trade.confidence} CONF</span>
+                <span style={{...mono,fontSize:"0.65rem",color:sessionColor,background:`${sessionColor}18`,padding:"2px 10px",borderRadius:"2px"}}>{analysis.session_info?.name} ({analysis.session_info?.quality})</span>
+                {analysis.dual_ai_conflict === false && <span style={{...mono,fontSize:"0.62rem",color:"var(--green)",background:"rgba(0,217,126,0.1)",padding:"2px 8px",borderRadius:"2px"}}>✓ DUAL AI CONFIRMED</span>}
+                {analysis.dual_ai_conflict && <span style={{...mono,fontSize:"0.62rem",color:"var(--red)",background:"var(--red-muted)",padding:"2px 8px",borderRadius:"2px"}}>⚠ AI CONFLICT</span>}
               </div>
-              <div>
-                <label style={labelStyle}>TIMEFRAME</label>
-                <select value={timeframe} onChange={e => setTimeframe(e.target.value)} style={selectStyle}>
-                  {TIMEFRAMES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+              {analysis.trade.direction === "WAIT"
+                ? <p style={{fontSize:"0.82rem",color:"var(--orange)",lineHeight:"1.6"}}>⏳ {analysis.trade.wait_reason}</p>
+                : <p style={{fontSize:"0.82rem",color:"var(--text2)",lineHeight:"1.6"}}>{analysis.summary}</p>}
+            </div>
+
+            {/* Confluence meter */}
+            <div style={{background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:"4px",padding:"1.25rem"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.75rem"}}>
+                <p style={{...mono,fontSize:"0.6rem",color:"var(--text3)",letterSpacing:"1px"}}>CONFLUENCE SCORE</p>
+                <span style={{...mono,fontSize:"0.75rem",fontWeight:"700",color:analysis.confluence_count>=5?"var(--green)":analysis.confluence_count>=3?"var(--orange)":"var(--red)"}}>
+                  {analysis.confluence_count}/7
+                </span>
+              </div>
+              <div style={{display:"flex",gap:"4px",marginBottom:"0.75rem"}}>
+                {[...Array(7)].map((_,i) => (
+                  <div key={i} style={{flex:1,height:"8px",borderRadius:"2px",background:i<analysis.confluence_count?(analysis.confluence_count>=5?"var(--green)":analysis.confluence_count>=3?"var(--orange)":"var(--red)"):"var(--bg4)"}}/>
+                ))}
+              </div>
+              {analysis.confluences?.map((c,i) => <p key={i} style={{fontSize:"0.72rem",color:"var(--text2)",marginBottom:"3px"}}>✓ {c}</p>)}
+            </div>
+
+            {/* Candle + Key level status */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}}>
+              <div style={{background:"var(--bg2)",border:`1px solid ${analysis.candle_info?.near_close?"rgba(0,217,126,0.3)":"var(--orange-border,var(--border))"}`,borderRadius:"4px",padding:"1rem"}}>
+                <p style={{...mono,fontSize:"0.58rem",color:"var(--text3)",marginBottom:"0.4rem"}}>CANDLE STATUS</p>
+                <p style={{...mono,fontSize:"0.8rem",fontWeight:"700",color:analysis.candle_info?.near_close?"var(--green)":"var(--orange)"}}>
+                  {analysis.candle_info?.near_close?"✓ Near Close":"⏳ Mid-Candle"}
+                </p>
+                <p style={{fontSize:"0.68rem",color:"var(--text3)",marginTop:"3px"}}>{analysis.candle_info?.pct_complete}% complete • {analysis.candle_info?.mins_remaining}m remaining</p>
+              </div>
+              <div style={{background:"var(--bg2)",border:`1px solid ${analysis.near_key_level?"rgba(0,217,126,0.3)":"var(--border)"}`,borderRadius:"4px",padding:"1rem"}}>
+                <p style={{...mono,fontSize:"0.58rem",color:"var(--text3)",marginBottom:"0.4rem"}}>KEY LEVEL</p>
+                <p style={{...mono,fontSize:"0.8rem",fontWeight:"700",color:analysis.near_key_level?"var(--green)":"var(--orange)"}}>
+                  {analysis.near_key_level?"✓ At Level":"⚠ Away from Level"}
+                </p>
+                <p style={{fontSize:"0.68rem",color:"var(--text3)",marginTop:"3px"}}>{analysis.key_level} • {analysis.distance_from_key_level_pct}% away</p>
               </div>
             </div>
 
-            <div>
-              <label style={labelStyle}>DIRECTION</label>
-              <div style={{ display: "flex", gap: "8px" }}>
-                {(["buy","sell"] as const).map(a => (
-                  <button key={a} onClick={() => setAction(a)} style={{
-                    flex: 1, padding: "9px", ...mono, fontSize: "0.75rem", letterSpacing: "1px",
-                    fontWeight: "700", cursor: "pointer", borderRadius: "3px",
-                    background: action === a ? (a === "buy" ? "rgba(0,217,126,0.15)" : "var(--red-muted)") : "var(--bg3)",
-                    border: `1px solid ${action === a ? (a === "buy" ? "rgba(0,217,126,0.4)" : "var(--red-border)") : "var(--border)"}`,
-                    color: action === a ? (a === "buy" ? "var(--green)" : "var(--red)") : "var(--text3)",
-                  }}>{a === "buy" ? "🟢 BUY / LONG" : "🔴 SELL / SHORT"}</button>
+            {/* Trade levels */}
+            {analysis.trade.direction !== "WAIT" && (
+              <div style={{background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:"4px",padding:"1.25rem"}}>
+                <p style={{...mono,fontSize:"0.6rem",color:"var(--text3)",letterSpacing:"1px",marginBottom:"0.75rem"}}>TRADE LEVELS</p>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px"}}>
+                  {[
+                    {l:"ENTRY",v:analysis.trade.entry,c:"var(--text)"},
+                    {l:"STOP LOSS",v:analysis.trade.stop_loss,c:"var(--red)"},
+                    {l:"TP1",v:analysis.trade.take_profit_1,c:"var(--green)"},
+                    {l:"TP2",v:analysis.trade.take_profit_2,c:"var(--green)"},
+                    {l:"R:R",v:analysis.trade.rr_ratio,c:"var(--orange)"},
+                    {l:"HOLD",v:analysis.trade.hold_duration,c:"var(--text2)"},
+                  ].map(({l,v,c})=>v&&<div key={l} style={{background:"var(--bg3)",padding:"8px 10px",borderRadius:"3px"}}>
+                    <p style={{...mono,fontSize:"0.55rem",color:"var(--text3)",marginBottom:"3px"}}>{l}</p>
+                    <p style={{...mono,fontSize:"0.78rem",fontWeight:"700",color:c}}>{v}</p>
+                  </div>)}
+                </div>
+                {analysis.trade.sl_reasoning && <p style={{fontSize:"0.7rem",color:"var(--text3)",marginTop:"8px"}}>SL: {analysis.trade.sl_reasoning}</p>}
+                {analysis.trade.invalidation && <p style={{fontSize:"0.7rem",color:"var(--red)",marginTop:"4px"}}>❌ {analysis.trade.invalidation}</p>}
+              </div>
+            )}
+
+            {/* Patterns */}
+            {(analysis.chart_patterns?.length>0||analysis.candlestick_patterns?.length>0) && (
+              <div style={{background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:"4px",padding:"1.25rem"}}>
+                <p style={{...mono,fontSize:"0.6rem",color:"var(--text3)",letterSpacing:"1px",marginBottom:"0.75rem"}}>PATTERNS DETECTED</p>
+                {analysis.chart_patterns?.map((p,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"8px",paddingBottom:"8px",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                    <div style={{flex:1}}>
+                      <span style={{fontSize:"0.78rem",fontWeight:"600"}}>{p.implication==="bullish"?"🔺":"🔻"} {p.name}</span>
+                      <span style={{...mono,fontSize:"0.58rem",color:"var(--text3)",marginLeft:"8px"}}>({p.status})</span>
+                      {p.historical_winrate!==undefined&&<span style={{...mono,fontSize:"0.6rem",marginLeft:"8px",color:p.historical_winrate>=60?"var(--green)":p.historical_winrate>=50?"var(--orange)":"var(--red)"}}>{p.historical_winrate}% WR</span>}
+                    </div>
+                    <span style={{...mono,fontSize:"0.6rem",color:p.reliability==="high"?"var(--green)":p.reliability==="medium"?"var(--orange)":"var(--red)",marginLeft:"8px"}}>{p.reliability?.toUpperCase()}</span>
+                  </div>
+                ))}
+                {analysis.candlestick_patterns?.map((p,i)=>(
+                  <p key={i} style={{fontSize:"0.75rem",color:"var(--text2)",marginBottom:"4px"}}>🕯️ {p.name} — <span style={{color:p.signal==="bullish"?"var(--green)":"var(--red)"}}>{p.signal}</span> ({p.strength})</p>
+                ))}
+              </div>
+            )}
+
+            {/* Indicators */}
+            <div style={{background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:"4px",padding:"1.25rem"}}>
+              <p style={{...mono,fontSize:"0.6rem",color:"var(--text3)",letterSpacing:"1px",marginBottom:"0.75rem"}}>INDICATORS</p>
+              <div style={{display:"flex",flexWrap:"wrap",gap:"8px"}}>
+                {Object.entries(analysis.indicators||{}).filter(([,v])=>v&&v!=="N/A").map(([k,v])=>(
+                  <div key={k} style={{background:"var(--bg3)",padding:"6px 12px",borderRadius:"3px"}}>
+                    <p style={{...mono,fontSize:"0.55rem",color:"var(--text3)",marginBottom:"2px"}}>{k.replace("_"," ").toUpperCase()}</p>
+                    <p style={{...mono,fontSize:"0.72rem",fontWeight:"700",color:v==="bullish"||v==="above"||v==="increasing"?"var(--green)":v==="bearish"||v==="below"||v==="decreasing"?"var(--red)":"var(--text2)"}}>{v}</p>
+                  </div>
                 ))}
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <div>
-                <label style={labelStyle}>CURRENT PRICE</label>
-                <input value={price} onChange={e => setPrice(e.target.value)} placeholder="e.g. 1.08450" style={inputStyle} />
-              </div>
-              <div>
-                <label style={labelStyle}>RSI VALUE (optional)</label>
-                <input value={rsi} onChange={e => setRsi(e.target.value)} placeholder="e.g. 28.4" style={inputStyle} />
-              </div>
-            </div>
-
-            <div>
-              <label style={labelStyle}>STRATEGY NAME (optional)</label>
-              <input value={strategy} onChange={e => setStrategy(e.target.value)} placeholder="e.g. RSI Divergence, Supply/Demand" style={inputStyle} />
-            </div>
-
-            <div>
-              <label style={labelStyle}>NOTES (optional)</label>
-              <textarea value={notes} onChange={e => setNotes(e.target.value)}
-                placeholder="Any context about the setup — key levels, patterns, confluence..."
-                rows={2} style={{ ...inputStyle, resize: "vertical", lineHeight: "1.6" }} />
-            </div>
+            {/* News + warnings */}
+            {analysis.news_correlation && <div style={{background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:"4px",padding:"1.25rem"}}><p style={{...mono,fontSize:"0.6rem",color:"var(--text3)",letterSpacing:"1px",marginBottom:"0.5rem"}}>NEWS CONTEXT</p><p style={{fontSize:"0.78rem",color:"var(--text2)",lineHeight:"1.6"}}>{analysis.news_correlation}</p></div>}
+            {analysis.warnings?.length>0 && <div style={{background:"var(--red-muted)",border:"1px solid var(--red-border)",borderRadius:"4px",padding:"1rem 1.25rem"}}><p style={{...mono,fontSize:"0.6rem",color:"var(--red)",letterSpacing:"1px",marginBottom:"0.5rem"}}>⚠️ WARNINGS</p>{analysis.warnings.map((w,i)=><p key={i} style={{fontSize:"0.75rem",color:"var(--red)",marginBottom:"3px"}}>• {w}</p>)}</div>}
           </div>
-        </div>
-
-        {/* Right — what happens + submit */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-
-          <div style={{ background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: "4px", padding: "1.25rem" }}>
-            <p style={{ fontSize: "0.85rem", fontWeight: "600", marginBottom: "1rem" }}>What happens when you submit</p>
+        ) : (
+          <div style={{background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:"4px",padding:"1.5rem"}}>
+            <p style={{fontSize:"0.85rem",fontWeight:"600",marginBottom:"1.25rem"}}>CSX AI v2 — What's new</p>
             {[
-              { step: "01", title: "Chart Analysis", desc: "If you uploaded a screenshot, CSX AI reads the chart visually — trend, key levels, patterns" },
-              { step: "02", title: "Security Checks", desc: "Session filter, news event scan, R:R check, volatility check — all must pass" },
-              { step: "03", title: "Backtest", desc: "Strategy conditions tested against 500 historical candles — win rate, R:R, profit factor" },
-              { step: "04", title: "CSX AI Verdict", desc: "AI gives TAKE / SKIP / WAIT recommendation with full reasoning" },
-              { step: "05", title: "Discord Post", desc: "Full report posted to your signal channel with all data visible to community" },
-            ].map(s => (
-              <div key={s.step} style={{ display: "flex", gap: "12px", marginBottom: "12px", alignItems: "flex-start" }}>
-                <span style={{ ...mono, fontSize: "0.65rem", color: "var(--red)", minWidth: "24px" }}>{s.step}</span>
-                <div>
-                  <p style={{ fontSize: "0.8rem", fontWeight: "600", marginBottom: "2px" }}>{s.title}</p>
-                  <p style={{ fontSize: "0.72rem", color: "var(--text2)", lineHeight: "1.5" }}>{s.desc}</p>
-                </div>
+              ["🔄","Dual AI confirmation","Runs the analysis twice — only signals if both agree"],
+              ["📊","3+ confluences required","Pattern + momentum + level + session must all align"],
+              ["⏰","Candle close check","Warns if you're mid-candle — wait for confirmation"],
+              ["🔑","Key level validation","Checks if price is actually near a proven S/R level"],
+              ["📈","Pattern win rate tracking","Tracks which patterns win/lose and warns on bad ones"],
+              ["🕐","Session filter","Flags Asian session as risky, prioritizes London/NY"],
+            ].map(([e,t,d])=>(
+              <div key={t} style={{display:"flex",gap:"12px",marginBottom:"12px"}}>
+                <span style={{fontSize:"1.1rem",flexShrink:0}}>{e}</span>
+                <div><p style={{fontSize:"0.8rem",fontWeight:"600",marginBottom:"2px"}}>{t}</p><p style={{fontSize:"0.72rem",color:"var(--text2)",lineHeight:"1.5"}}>{d}</p></div>
               </div>
             ))}
           </div>
-
-          {error && (
-            <div style={{ background: "var(--red-muted)", border: "1px solid var(--red-border)", borderRadius: "3px", padding: "10px 14px" }}>
-              <p style={{ ...mono, fontSize: "0.68rem", color: "var(--red)" }}>⚠ {error}</p>
-            </div>
-          )}
-
-          {result && (
-            <div style={{ background: "rgba(0,217,126,0.08)", border: "1px solid rgba(0,217,126,0.3)", borderRadius: "3px", padding: "10px 14px" }}>
-              <p style={{ ...mono, fontSize: "0.68rem", color: "var(--green)" }}>{result}</p>
-            </div>
-          )}
-
-          <button onClick={analyzeAndSubmit} disabled={loading} style={{
-            padding: "14px", background: loading ? "var(--bg4)" : "var(--red)",
-            border: "none", color: loading ? "var(--text3)" : "#fff",
-            ...mono, fontSize: "0.8rem", letterSpacing: "1px", fontWeight: "700",
-            borderRadius: "3px", cursor: loading ? "not-allowed" : "pointer", width: "100%",
-          }}>
-            {loading ? "// ANALYZING..." : "ANALYZE & SUBMIT TO DISCORD →"}
-          </button>
-
-          <p style={{ ...mono, fontSize: "0.6rem", color: "var(--text3)", textAlign: "center" }}>
-            Make sure webhook.py is running on port 5002
-          </p>
-        </div>
+        )}
       </div>
     </div>
   );
